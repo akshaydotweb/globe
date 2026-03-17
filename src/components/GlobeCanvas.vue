@@ -118,22 +118,71 @@ function createLabel(text) {
 
 // ---------------- UPDATE LABELS ----------------
 function updateLabels() {
+  const usedPositions = []
+
   labels.forEach(label => {
 
     const worldPos = new THREE.Vector3()
     label.getWorldPosition(worldPos)
 
-    label.lookAt(camera.position)
+    // project to screen
+    const screenPos = worldPos.clone().project(camera)
 
-    const dist = camera.position.distanceTo(worldPos)
-    const scale = THREE.MathUtils.clamp(2 / dist, 0.05, 0.25)
+    const x = (screenPos.x * 0.5 + 0.5) * window.innerWidth
+    const y = (1 - (screenPos.y * 0.5 + 0.5)) * window.innerHeight
 
-    label.scale.set(scale, scale * 0.4, 1)
+    // ---------------- EDGE CULLING ----------------
+    const margin = 80
 
+    if (
+      x < margin ||
+      x > window.innerWidth - margin ||
+      y < margin ||
+      y > window.innerHeight - margin
+    ) {
+      label.visible = false
+      return
+    }
+
+    // ---------------- BACKSIDE CULLING ----------------
     const dot = worldPos.clone().normalize()
       .dot(camera.position.clone().normalize())
 
-    label.visible = dot > 0.2
+    if (dot < 0.2) {
+      label.visible = false
+      return
+    }
+
+    // ---------------- OVERLAP CULLING ----------------
+    let tooClose = false
+
+    for (let p of usedPositions) {
+      const dx = p.x - x
+      const dy = p.y - y
+
+      if (dx * dx + dy * dy < 4000) { // distance threshold
+        tooClose = true
+        break
+      }
+    }
+
+    if (tooClose) {
+      label.visible = false
+      return
+    }
+
+    // ---------------- KEEP LABEL ----------------
+    usedPositions.push({ x, y })
+
+    label.visible = true
+
+    // scale based on distance
+    const dist = camera.position.distanceTo(worldPos)
+    const scale = THREE.MathUtils.clamp(2 / dist, 0.05, 0.22)
+
+    label.scale.set(scale, scale * 0.4, 1)
+
+    label.lookAt(camera.position)
   })
 }
 
