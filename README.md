@@ -1,4 +1,4 @@
-# Globe: Mapbox-Style 3D Interactive Globe with Three.js
+# Globe: 3D Interactive Globe with Three.js
 
 This project is a high-quality, interactive 3D globe built with Three.js and Vue.js, inspired by Mapbox GL JS. It features smooth zoom, inertia rotation, vector/GeoJSON rendering, and Mapbox-like label density and fading. Designed for beautiful, production-level globe visualizations with robust label management and modern UI.
 
@@ -15,7 +15,7 @@ This project is a high-quality, interactive 3D globe built with Three.js and Vue
 
 1. Clone the repo:
    ```sh
-   git clone https://github.com/your-username/globe.git
+   git clone https://github.com/akshaydotweb/globe.git
    cd globe
    ```
 2. Install dependencies:
