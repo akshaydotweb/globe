@@ -11,26 +11,7 @@ const container = ref(null)
 let scene, camera, renderer, globe
 let labels = []
 
-// ---------------- getPriority ----------------
-function getPriority(feature) {
-  const name = feature.properties.ADMIN || ""
-
-  const area = feature.properties.AREA || 0
-
-  // crude importance model (works surprisingly well)
-  let score = area
-
-  // boost well-known countries
-  const major = [
-    "United States", "China", "India", "Russia", "Brazil",
-    "Australia", "Canada"
-  ]
-
-  if (major.includes(name)) score *= 5
-
-  return score
-}
-// ---------------- LAT/LNG → SPHERE ----------------
+// ---------------- UTILS ----------------
 function toSphere(lat, lng, r = 1) {
   const phi = (90 - lat) * Math.PI / 180
   const theta = (lng + 180) * Math.PI / 180
@@ -42,7 +23,6 @@ function toSphere(lat, lng, r = 1) {
   ).multiplyScalar(r)
 }
 
-// ---------------- CENTROID ----------------
 function getCentroid(coords) {
   let x = 0, y = 0, z = 0
 
@@ -57,62 +37,53 @@ function getCentroid(coords) {
   return new THREE.Vector3(x/len, y/len, z/len).normalize()
 }
 
-// ---------------- SAFE MASK ----------------
-async function createMaskSafe() {
-  try {
-    const data = await fetch('/world.json').then(r => r.json())
+// ---------------- MASK ----------------
+async function createMask() {
+  const data = await fetch('/world.json').then(r => r.json())
 
-    const canvas = document.createElement('canvas')
-    canvas.width = 2048
-    canvas.height = 1024
-    const ctx = canvas.getContext('2d')
+  const canvas = document.createElement('canvas')
+  canvas.width = 2048
+  canvas.height = 1024
+  const ctx = canvas.getContext('2d')
 
-    ctx.fillStyle = 'black'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.fillStyle = 'black'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    ctx.fillStyle = 'white'
+  ctx.fillStyle = 'white'
 
-    function project(lng, lat) {
-      return [
-        ((lng + 180) / 360) * canvas.width,
-        ((90 - lat) / 180) * canvas.height
-      ]
-    }
+  function project(lng, lat) {
+    return [
+      ((lng + 180) / 360) * canvas.width,
+      ((90 - lat) / 180) * canvas.height
+    ]
+  }
 
-    data.features.forEach(f => {
-      let polys = []
+  data.features.forEach(f => {
+    let polys = []
 
-      if (f.geometry.type === 'Polygon') {
-        polys = [f.geometry.coordinates]
-      } else if (f.geometry.type === 'MultiPolygon') {
-        polys = f.geometry.coordinates
-      }
+    if (f.geometry.type === 'Polygon') polys = [f.geometry.coordinates]
+    if (f.geometry.type === 'MultiPolygon') polys = f.geometry.coordinates
 
-      polys.forEach(poly => {
-        poly.forEach((ring, i) => {
-          ctx.beginPath()
+    polys.forEach(poly => {
+      poly.forEach((ring, i) => {
+        ctx.beginPath()
 
-          ring.forEach(([lng, lat], idx) => {
-            const [x, y] = project(lng, lat)
-            idx === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
-          })
-
-          ctx.closePath()
-
-          if (i === 0) ctx.fill()
-          else ctx.globalCompositeOperation = 'destination-out'
+        ring.forEach(([lng, lat], idx) => {
+          const [x, y] = project(lng, lat)
+          idx === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
         })
 
-        ctx.globalCompositeOperation = 'source-over'
+        ctx.closePath()
+
+        if (i === 0) ctx.fill()
+        else ctx.globalCompositeOperation = 'destination-out'
       })
+
+      ctx.globalCompositeOperation = 'source-over'
     })
+  })
 
-    return new THREE.CanvasTexture(canvas)
-
-  } catch (e) {
-    console.error("Mask failed → fallback used", e)
-    return null
-  }
+  return new THREE.CanvasTexture(canvas)
 }
 
 // ---------------- LABEL ----------------
@@ -123,9 +94,14 @@ function createLabel(text) {
   canvas.width = 256
   canvas.height = 64
 
-  ctx.fillStyle = '#333'
-  ctx.font = '22px sans-serif'
-  ctx.textAlign = 'center'
+  // halo
+  ctx.fillStyle = "white"
+  ctx.font = "bold 22px sans-serif"
+  ctx.textAlign = "center"
+  ctx.fillText(text, 128, 42)
+
+  // text
+  ctx.fillStyle = "#333"
   ctx.fillText(text, 128, 40)
 
   const texture = new THREE.CanvasTexture(canvas)
@@ -135,40 +111,38 @@ function createLabel(text) {
   )
 }
 
-// ---------------- UPDATE LABELS ----------------
+// ---------------- PRIORITY ----------------
+function getPriority(f) {
+  const area = f.properties.AREA || 1
+  return area
+}
 
+// ---------------- LABEL ENGINE ----------------
 function updateLabels() {
-  const usedPositions = []
+  const used = []
 
-  // 🔥 sort labels by priority every frame
-  const sorted = [...labels].sort((a, b) => {
-    return b.userData.priority - a.userData.priority
-  })
+  const sorted = [...labels].sort((a, b) =>
+    b.userData.priority - a.userData.priority
+  )
 
   sorted.forEach(label => {
 
     const worldPos = new THREE.Vector3()
     label.getWorldPosition(worldPos)
 
-    const screenPos = worldPos.clone().project(camera)
+    const screen = worldPos.clone().project(camera)
 
-    const x = (screenPos.x * 0.5 + 0.5) * window.innerWidth
-    const y = (1 - (screenPos.y * 0.5 + 0.5)) * window.innerHeight
+    const x = (screen.x * 0.5 + 0.5) * window.innerWidth
+    const y = (1 - (screen.y * 0.5 + 0.5)) * window.innerHeight
 
-    // ---------------- EDGE ----------------
-    const margin = 100
-
-    if (
-      x < margin ||
-      x > window.innerWidth - margin ||
-      y < margin ||
-      y > window.innerHeight - margin
-    ) {
+    // edge
+    if (x < 100 || x > window.innerWidth - 100 ||
+        y < 100 || y > window.innerHeight - 100) {
       label.visible = false
       return
     }
 
-    // ---------------- BACKSIDE ----------------
+    // backside
     const dot = worldPos.clone().normalize()
       .dot(camera.position.clone().normalize())
 
@@ -177,50 +151,29 @@ function updateLabels() {
       return
     }
 
-    // ---------------- COLLISION ----------------
-    let blocked = false
-
-    for (let p of usedPositions) {
+    // collision
+    for (let p of used) {
       const dx = p.x - x
       const dy = p.y - y
-
-      if (dx * dx + dy * dy < 5000) {
-        blocked = true
-        break
+      if (dx*dx + dy*dy < 5000) {
+        label.visible = false
+        return
       }
     }
 
-    if (blocked) {
-      label.visible = false
-      return
-    }
-
-    // ---------------- KEEP ----------------
-    usedPositions.push({ x, y })
-
-    // smooth fade (instead of pop)
-    label.material.opacity = THREE.MathUtils.lerp(
-      label.material.opacity || 0,
-      1,
-      0.1
-    )
-
-    label.material.transparent = true
+    used.push({ x, y })
 
     label.visible = true
 
     const dist = camera.position.distanceTo(worldPos)
-
-    // zoom-based density
-    const zoomFactor = THREE.MathUtils.clamp(3 / dist, 0.5, 2)
-
-    const scale = THREE.MathUtils.clamp(zoomFactor * 0.12, 0.05, 0.25)
+    const scale = THREE.MathUtils.clamp(2/dist, 0.05, 0.22)
 
     label.scale.set(scale, scale * 0.4, 1)
 
     label.lookAt(camera.position)
   })
 }
+
 // ---------------- BORDERS ----------------
 function createBorders(data) {
   const group = new THREE.Group()
@@ -228,31 +181,25 @@ function createBorders(data) {
   data.features.forEach(f => {
     let polys = []
 
-    if (f.geometry.type === 'Polygon') {
-      polys = [f.geometry.coordinates]
-    } else if (f.geometry.type === 'MultiPolygon') {
-      polys = f.geometry.coordinates
-    }
+    if (f.geometry.type === 'Polygon') polys = [f.geometry.coordinates]
+    if (f.geometry.type === 'MultiPolygon') polys = f.geometry.coordinates
 
     polys.forEach(poly => {
       poly.forEach(ring => {
-
         const points = ring.map(([lng, lat]) =>
           toSphere(lat, lng, 1.001)
         )
 
         const geo = new THREE.BufferGeometry().setFromPoints(points)
 
-        const line = new THREE.Line(
+        group.add(new THREE.Line(
           geo,
           new THREE.LineBasicMaterial({
             color: 0xff6b6b,
-            opacity: 0.4,
+            opacity: 0.3,
             transparent: true
           })
-        )
-
-        group.add(line)
+        ))
       })
     })
   })
@@ -264,125 +211,132 @@ function createBorders(data) {
 onMounted(async () => {
 
   scene = new THREE.Scene()
-  scene.background = new THREE.Color(0xeef3f7)
+  scene.background = new THREE.Color(0xf4f7fb)
 
-  camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100)
-  camera.position.set(0, 0, 2.5)
+  camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 100)
+  camera.position.set(0,0,2.5)
 
   renderer = new THREE.WebGLRenderer({ antialias: true })
   renderer.setSize(window.innerWidth, window.innerHeight)
+  renderer.outputColorSpace = THREE.SRGBColorSpace
+  renderer.toneMapping = THREE.NoToneMapping
   container.value.appendChild(renderer.domElement)
 
-  // fallback sphere first (so you NEVER get blank screen)
+  const mask = await createMask()
+
+  const material = new THREE.ShaderMaterial({
+    uniforms: { mask: { value: mask } },
+    vertexShader: `
+varying vec2 vUv;
+
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+}
+    `,
+    fragmentShader: `
+varying vec2 vUv;
+uniform sampler2D mask;
+
+void main(){
+
+  float m = texture2D(mask, vUv).r;
+
+  // \U0001F30A Mapbox ocean palette (exact feel)
+  vec3 oceanTop    = vec3(0.78, 0.92, 0.98);
+  vec3 oceanBottom = vec3(0.52, 0.76, 0.90);
+
+  // \U0001F33F land (soft pastel)
+  vec3 land = vec3(0.80, 0.89, 0.74);
+
+  // \U0001F3AF vertical gradient ONLY (this is key)
+  float g = smoothstep(0.0, 1.0, vUv.y);
+
+  vec3 water = mix(oceanBottom, oceanTop, g);
+
+  vec3 color = mix(water, land, m);
+
+  // \U0001F4A8 VERY subtle edge fade (not lighting)
+  float edge = smoothstep(0.7, 1.0, length(vUv - 0.5));
+  color = mix(color, vec3(0.85, 0.92, 0.98), edge * 0.2);
+
+  // \U0001F3AF gamma correction (important for vibrancy)
+  color = pow(color, vec3(0.95));
+
+  gl_FragColor = vec4(color, 1.0);
+}
+    `
+  })
+
   globe = new THREE.Mesh(
-    new THREE.SphereGeometry(1, 64, 64),
-    new THREE.MeshBasicMaterial({ color: 0x88ccee })
+    new THREE.SphereGeometry(1,256,256),
+    material
   )
 
   scene.add(globe)
 
-  // try to load mask
-  const mask = await createMaskSafe()
-
-  if (mask) {
-    globe.material = new THREE.ShaderMaterial({
-      uniforms: { mask: { value: mask } },
-      vertexShader: `
-        varying vec2 vUv;
-        void main(){
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
-        }
-      `,
-      fragmentShader: `
-        varying vec2 vUv;
-        uniform sampler2D mask;
-
-        void main(){
-          float m = texture2D(mask, vUv).r;
-
-          vec3 oceanLight = vec3(0.62, 0.82, 0.92);
-          vec3 oceanDeep  = vec3(0.35, 0.65, 0.85);
-          vec3 land       = vec3(0.78, 0.88, 0.68);
-
-          vec3 water = mix(oceanDeep, oceanLight, vUv.y);
-          vec3 color = mix(water, land, m);
-
-          float light = 0.6 + 0.4 * vUv.y;
-
-          gl_FragColor = vec4(color * light, 1.0);
-        }
-      `
+  // atmosphere
+  scene.add(new THREE.Mesh(
+    new THREE.SphereGeometry(1.015, 64, 64),
+    new THREE.MeshBasicMaterial({
+      color: 0xd6ecff,
+      transparent: true,
+      opacity: 0.25,
+      side: THREE.BackSide
     })
-  }
+  ))
 
-  // load geojson
-  let data
-  try {
-    data = await fetch('/world.json').then(r => r.json())
-    console.log("Loaded:", data.features.length)
-  } catch (e) {
-    console.error("GeoJSON failed", e)
-    return
-  }
+  const data = await fetch('/world.json').then(r => r.json())
 
-  // borders
   globe.add(createBorders(data))
 
-  // labels (SAFE)
-  data.features.forEach(f => {
+  const sorted = [...data.features].sort((a,b)=>getPriority(b)-getPriority(a))
+
+  sorted.forEach(f=>{
     const name = f.properties.ADMIN
-    if (!name) return
+    if(!name) return
 
     let coords = []
+    if(f.geometry.type==="Polygon") coords=f.geometry.coordinates[0]
+    else if(f.geometry.type==="MultiPolygon") coords=f.geometry.coordinates[0][0]
 
-    if (f.geometry.type === 'Polygon') {
-      coords = f.geometry.coordinates[0]
-    } else if (f.geometry.type === 'MultiPolygon') {
-      coords = f.geometry.coordinates[0][0]
-    }
-
-    if (!coords || coords.length === 0) return
+    if(!coords.length) return
 
     const centroid = getCentroid(coords)
 
     const label = createLabel(name)
     label.position.copy(centroid.multiplyScalar(1.02))
 
+    label.userData.priority = getPriority(f)
+
     labels.push(label)
     globe.add(label)
   })
 
   // interaction
-  let isDragging = false
-  let prev = { x: 0, y: 0 }
+  let isDragging=false, prev={x:0,y:0}
 
-  window.addEventListener('mousedown', e => {
-    isDragging = true
-    prev = { x: e.clientX, y: e.clientY }
+  window.addEventListener('mousedown',e=>{
+    isDragging=true
+    prev={x:e.clientX,y:e.clientY}
   })
 
-  window.addEventListener('mouseup', () => isDragging = false)
+  window.addEventListener('mouseup',()=>isDragging=false)
 
-  window.addEventListener('mousemove', e => {
-    if (!isDragging) return
+  window.addEventListener('mousemove',e=>{
+    if(!isDragging) return
 
-    const dx = e.clientX - prev.x
-    const dy = e.clientY - prev.y
+    globe.rotation.y += (e.clientX-prev.x)*0.005
+    globe.rotation.x += (e.clientY-prev.y)*0.003
 
-    globe.rotation.y += dx * 0.005
-    globe.rotation.x += dy * 0.003
-
-    prev = { x: e.clientX, y: e.clientY }
+    prev={x:e.clientX,y:e.clientY}
   })
 
-  function animate() {
+  function animate(){
     requestAnimationFrame(animate)
-
     globe.rotation.y += 0.001
     updateLabels()
-
-    renderer.render(scene, camera)
+    renderer.render(scene,camera)
   }
 
   animate()
