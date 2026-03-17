@@ -1,50 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>3D Globe</title>
-
-  <style>
-    body {
-      margin: 0;
-      overflow: hidden;
-      background: #eeecea;
-      font-family: sans-serif;
-    }
-
-    canvas {
-      display: block;
-    }
-
-    #ui {
-      position: absolute;
-      top: 30px;
-      left: 50%;
-      transform: translateX(-50%);
-      display: flex;
-      gap: 10px;
-    }
-
-    .pill {
-      background: rgba(255,255,255,0.9);
-      padding: 6px 14px;
-      border-radius: 20px;
-      font-size: 12px;
-      cursor: pointer;
-    }
-  </style>
-</head>
-
-<body>
-  <canvas id="c"></canvas>
-
-  <div id="ui">
-    <div class="pill" id="pause">Pause</div>
-    <div class="pill" id="tilt">Tilt view</div>
-    <div class="pill" id="reset">Reset</div>
-  </div>
-
-  <script type="module" src="./main.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Globe App</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
 </html>

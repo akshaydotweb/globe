@@ -1,28 +1,37 @@
 import * as THREE from 'three'
 import earcut from 'earcut'
-import { latLngToVector3, mercator } from '../math/Projection'
-import { clipPolygon } from './TileClipper'
+
+// MERCATOR PROJECTION (2D)
+function mercator(lat, lng) {
+  const x = lng * Math.PI / 180
+  const y = Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI / 180) / 2))
+  return [x, y]
+}
+
+// SPHERE PROJECTION
+function toSphere(lat, lng, r = 1.001) {
+  const phi = (90 - lat) * Math.PI / 180
+  const theta = (lng + 180) * Math.PI / 180
+
+  return new THREE.Vector3(
+    -r * Math.sin(phi) * Math.cos(theta),
+     r * Math.cos(phi),
+     r * Math.sin(phi) * Math.sin(theta)
+  )
+}
 
 export function createTileMesh(feature) {
-
-    const bounds = {
-        minX: 0,
-        minY: 0,
-        maxX: 1,
-        maxY: 1
-        }
-
   const group = new THREE.Group()
 
   const coords = feature.geometry.coordinates
-
-  const polys = feature.geometry.type === 'Polygon'
+  const polygons = feature.geometry.type === 'Polygon'
     ? [coords]
     : coords
 
-  polys.forEach(polygon => {
+  polygons.forEach(polygon => {
     const flat = []
-    const verts = []
+    const positions = []
+    const latLngs = []
     const holes = []
 
     let holeIndex = 0
@@ -34,27 +43,37 @@ export function createTileMesh(feature) {
       }
 
       ring.forEach(([lng, lat]) => {
+        // STEP 1: project to mercator
         const [x, y] = mercator(lat, lng)
         flat.push(x, y)
 
-        const v = latLngToVector3(lat, lng)
-        verts.push(v.x, v.y, v.z)
+        latLngs.push([lat, lng])
       })
     })
 
+    // STEP 2: triangulate in 2D
     const indices = earcut(flat, holes)
 
-    const geo = new THREE.BufferGeometry()
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3))
-    geo.setIndex(indices)
+    // STEP 3: map to sphere
+    latLngs.forEach(([lat, lng]) => {
+      const v = toSphere(lat, lng)
+      positions.push(v.x, v.y, v.z)
+    })
 
-    group.add(new THREE.Mesh(
-      geo,
-      new THREE.MeshBasicMaterial({
-        color: 0xc8d5b9,
-        side: THREE.DoubleSide
-      })
-    ))
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute(positions, 3)
+    )
+    geometry.setIndex(indices)
+
+    // CRITICAL: flat shading look (Mapbox style)
+    const material = new THREE.MeshBasicMaterial({
+      color: 0xc8d5b9,
+      side: THREE.DoubleSide
+    })
+
+    group.add(new THREE.Mesh(geometry, material))
   })
 
   return group
