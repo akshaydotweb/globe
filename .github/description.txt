@@ -1,0 +1,1 @@
+Mapbox-style interactive 3D globe using Three.js and Vue.js. Features smooth zoom, inertia, vector/GeoJSON rendering, and Mapbox-like label density/fade. Production-quality, beautiful, and highly interactive.
