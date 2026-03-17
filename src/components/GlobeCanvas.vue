@@ -11,6 +11,25 @@ const container = ref(null)
 let scene, camera, renderer, globe
 let labels = []
 
+// ---------------- getPriority ----------------
+function getPriority(feature) {
+  const name = feature.properties.ADMIN || ""
+
+  const area = feature.properties.AREA || 0
+
+  // crude importance model (works surprisingly well)
+  let score = area
+
+  // boost well-known countries
+  const major = [
+    "United States", "China", "India", "Russia", "Brazil",
+    "Australia", "Canada"
+  ]
+
+  if (major.includes(name)) score *= 5
+
+  return score
+}
 // ---------------- LAT/LNG → SPHERE ----------------
 function toSphere(lat, lng, r = 1) {
   const phi = (90 - lat) * Math.PI / 180
@@ -117,22 +136,27 @@ function createLabel(text) {
 }
 
 // ---------------- UPDATE LABELS ----------------
+
 function updateLabels() {
   const usedPositions = []
 
-  labels.forEach(label => {
+  // 🔥 sort labels by priority every frame
+  const sorted = [...labels].sort((a, b) => {
+    return b.userData.priority - a.userData.priority
+  })
+
+  sorted.forEach(label => {
 
     const worldPos = new THREE.Vector3()
     label.getWorldPosition(worldPos)
 
-    // project to screen
     const screenPos = worldPos.clone().project(camera)
 
     const x = (screenPos.x * 0.5 + 0.5) * window.innerWidth
     const y = (1 - (screenPos.y * 0.5 + 0.5)) * window.innerHeight
 
-    // ---------------- EDGE CULLING ----------------
-    const margin = 80
+    // ---------------- EDGE ----------------
+    const margin = 100
 
     if (
       x < margin ||
@@ -144,48 +168,59 @@ function updateLabels() {
       return
     }
 
-    // ---------------- BACKSIDE CULLING ----------------
+    // ---------------- BACKSIDE ----------------
     const dot = worldPos.clone().normalize()
       .dot(camera.position.clone().normalize())
 
-    if (dot < 0.2) {
+    if (dot < 0.25) {
       label.visible = false
       return
     }
 
-    // ---------------- OVERLAP CULLING ----------------
-    let tooClose = false
+    // ---------------- COLLISION ----------------
+    let blocked = false
 
     for (let p of usedPositions) {
       const dx = p.x - x
       const dy = p.y - y
 
-      if (dx * dx + dy * dy < 4000) { // distance threshold
-        tooClose = true
+      if (dx * dx + dy * dy < 5000) {
+        blocked = true
         break
       }
     }
 
-    if (tooClose) {
+    if (blocked) {
       label.visible = false
       return
     }
 
-    // ---------------- KEEP LABEL ----------------
+    // ---------------- KEEP ----------------
     usedPositions.push({ x, y })
+
+    // smooth fade (instead of pop)
+    label.material.opacity = THREE.MathUtils.lerp(
+      label.material.opacity || 0,
+      1,
+      0.1
+    )
+
+    label.material.transparent = true
 
     label.visible = true
 
-    // scale based on distance
     const dist = camera.position.distanceTo(worldPos)
-    const scale = THREE.MathUtils.clamp(2 / dist, 0.05, 0.22)
+
+    // zoom-based density
+    const zoomFactor = THREE.MathUtils.clamp(3 / dist, 0.5, 2)
+
+    const scale = THREE.MathUtils.clamp(zoomFactor * 0.12, 0.05, 0.25)
 
     label.scale.set(scale, scale * 0.4, 1)
 
     label.lookAt(camera.position)
   })
 }
-
 // ---------------- BORDERS ----------------
 function createBorders(data) {
   const group = new THREE.Group()
