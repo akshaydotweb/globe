@@ -43,21 +43,46 @@ function getPriority(f) {
   return f.properties.AREA || 1
 }
 
+function getLabelType(area) {
+  if (area > 2500000) return "major"
+  if (area > 800000) return "medium"
+  return "small"
+}
+
 // ---------------- LABEL ----------------
-function createLabel(text) {
+function createLabel(text, type) {
   const canvas = document.createElement('canvas')
-  canvas.width = 256
-  canvas.height = 64
+  canvas.width = 512
+  canvas.height = 128
 
   const ctx = canvas.getContext('2d')
 
-  ctx.fillStyle = "white"
-  ctx.font = "bold 22px sans-serif"
-  ctx.textAlign = "center"
-  ctx.fillText(text, 128, 42)
+  let fontSize = 28
+  let weight = "600"
+  let color = "#2b2b2b"
 
-  ctx.fillStyle = "#444"
-  ctx.fillText(text, 128, 40)
+  if (type === "major") {
+    fontSize = 36
+    weight = "700"
+    color = "#1f1f1f"
+  }
+
+  if (type === "small") {
+    fontSize = 22
+    weight = "500"
+    color = "#555"
+  }
+
+  ctx.textAlign = "center"
+
+  // halo
+  ctx.fillStyle = "rgba(255,255,255,0.9)"
+  ctx.font = `${weight} ${fontSize}px sans-serif`
+  ctx.fillText(text, 256, 66)
+
+  // text
+  ctx.fillStyle = color
+  ctx.fillText(text, 256, 64)
 
   const texture = new THREE.CanvasTexture(canvas)
 
@@ -101,12 +126,10 @@ async function createMask() {
     polys.forEach(poly => {
       poly.forEach((ring, i) => {
         ctx.beginPath()
-
         ring.forEach(([lng, lat], idx) => {
           const [x,y] = project(lng,lat)
           idx===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y)
         })
-
         ctx.closePath()
         if (i===0) ctx.fill()
       })
@@ -125,24 +148,33 @@ function updateLabels() {
   )
 
   const anchors = [
-    [0, 0],
-    [0, 20],
-    [0, -20],
-    [20, 0],
-    [-20, 0]
+    [0,0],[0,20],[0,-20],[20,0],[-20,0]
   ]
+
+  const zoomNorm = (currentZoom - 1.8) / (4.5 - 1.8)
 
   sorted.forEach(label => {
 
     const worldPos = new THREE.Vector3()
     label.getWorldPosition(worldPos)
 
-    // backside fix
+    // backside
     const camDir = camera.position.clone().normalize()
     const labelDir = worldPos.clone().normalize()
 
     if (camDir.dot(labelDir) < 0) {
-      label.visible = false
+      fadeOut(label)
+      return
+    }
+
+    // zoom hierarchy
+    if (label.userData.type === "small" && zoomNorm > 0.6) {
+      fadeOut(label)
+      return
+    }
+
+    if (label.userData.type === "medium" && zoomNorm > 0.8) {
+      fadeOut(label)
       return
     }
 
@@ -154,29 +186,17 @@ function updateLabels() {
     let placed = false
 
     for (let [ox, oy] of anchors) {
-
       const x = baseX + ox
       const y = baseY + oy
 
-      const w = 120
-      const h = 30
+      const w = 140
+      const h = 36
 
-      const box = {
-        x1: x - w/2,
-        y1: y - h/2,
-        x2: x + w/2,
-        y2: y + h/2
-      }
+      const box = { x1:x-w/2,y1:y-h/2,x2:x+w/2,y2:y+h/2 }
 
       let collision = false
-
       for (let b of collisionBoxes) {
-        if (
-          box.x1 < b.x2 &&
-          box.x2 > b.x1 &&
-          box.y1 < b.y2 &&
-          box.y2 > b.y1
-        ) {
+        if (box.x1 < b.x2 && box.x2 > b.x1 && box.y1 < b.y2 && box.y2 > b.y1) {
           collision = true
           break
         }
@@ -185,42 +205,46 @@ function updateLabels() {
       if (!collision) {
         collisionBoxes.push(box)
 
-        label.visible = true
-
-        // 🔥 CRITICAL FIX — restore stable position
         label.position.copy(label.userData.basePosition)
 
         const dist = camera.position.distanceTo(worldPos)
+        const scale = THREE.MathUtils.clamp((3/dist),0.08,0.35)
 
-        const scale = THREE.MathUtils.clamp(
-          (3 / dist),
-          0.08,
-          0.35
-        )
-
-        label.scale.set(scale, scale * 0.4, 1)
+        label.scale.set(scale, scale*0.4,1)
         label.lookAt(camera.position)
+
+        fadeIn(label)
 
         placed = true
         break
       }
     }
 
-    if (!placed) label.visible = false
+    if (!placed) fadeOut(label)
   })
+}
+
+function fadeIn(label){
+  label.visible = true
+  label.material.opacity = THREE.MathUtils.lerp(label.material.opacity || 0,1,0.1)
+}
+
+function fadeOut(label){
+  label.material.opacity = THREE.MathUtils.lerp(label.material.opacity || 1,0,0.1)
+  if (label.material.opacity < 0.05) label.visible = false
 }
 
 // ---------------- INIT ----------------
 onMounted(async () => {
 
   scene = new THREE.Scene()
-  scene.background = new THREE.Color(0xf4f7fb)
+  scene.background = new THREE.Color(0xf7f9fc)
 
-  camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 100)
+  camera = new THREE.PerspectiveCamera(45,window.innerWidth/window.innerHeight,0.1,100)
   camera.position.set(0,0,currentZoom)
 
-  renderer = new THREE.WebGLRenderer({ antialias:true })
-  renderer.setSize(window.innerWidth, window.innerHeight)
+  renderer = new THREE.WebGLRenderer({antialias:true})
+  renderer.setSize(window.innerWidth,window.innerHeight)
   renderer.outputColorSpace = THREE.SRGBColorSpace
   renderer.toneMapping = THREE.NoToneMapping
 
@@ -229,16 +253,16 @@ onMounted(async () => {
   const mask = await createMask()
 
   const material = new THREE.ShaderMaterial({
-    uniforms: { mask:{value:mask} },
+    uniforms:{mask:{value:mask}},
     vertexShader:`varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
     fragmentShader:`
       varying vec2 vUv;
       uniform sampler2D mask;
       void main(){
         float m=texture2D(mask,vUv).r;
-        vec3 oceanTop=vec3(0.78,0.92,0.98);
-        vec3 oceanBottom=vec3(0.52,0.76,0.90);
-        vec3 land=vec3(0.80,0.89,0.74);
+        vec3 oceanTop=vec3(0.80,0.94,0.99);
+        vec3 oceanBottom=vec3(0.55,0.78,0.92);
+        vec3 land=vec3(0.82,0.90,0.75);
         float g=smoothstep(0.0,1.0,vUv.y);
         vec3 water=mix(oceanBottom,oceanTop,g);
         vec3 color=mix(water,land,m);
@@ -247,42 +271,47 @@ onMounted(async () => {
     `
   })
 
-  globe = new THREE.Mesh(new THREE.SphereGeometry(1,256,256), material)
+  globe = new THREE.Mesh(new THREE.SphereGeometry(1,256,256),material)
   scene.add(globe)
 
-  const data = await fetch('/world.json').then(r => r.json())
+  const data = await fetch('/world.json').then(r=>r.json())
 
-  data.features.forEach(f => {
-    const name = f.properties.ADMIN
-    if (!name) return
+  data.features.forEach(f=>{
+    const name=f.properties.ADMIN
+    if(!name) return
 
-    let coords = []
-    if (f.geometry.type==="Polygon") coords=f.geometry.coordinates[0]
+    let coords=[]
+    if(f.geometry.type==="Polygon") coords=f.geometry.coordinates[0]
     else coords=f.geometry.coordinates[0][0]
 
-    const centroid = getCentroid(coords)
+    const centroid=getCentroid(coords)
+    const basePos=centroid.clone().multiplyScalar(1.08)
 
-    const basePos = centroid.clone().multiplyScalar(1.08)
+    const type=getLabelType(f.properties.AREA)
 
-    const label = createLabel(name)
+    const label=createLabel(name,type)
+
     label.position.copy(basePos)
 
-    label.userData.priority = getPriority(f)
-    label.userData.basePosition = basePos.clone()
+    label.userData={
+      priority:getPriority(f),
+      basePosition:basePos.clone(),
+      type:type
+    }
 
     labels.push(label)
     globe.add(label)
   })
 
   // zoom
-  window.addEventListener('wheel', e=>{
+  window.addEventListener('wheel',e=>{
     e.preventDefault()
-    targetZoom += e.deltaY * 0.0015
-    targetZoom = Math.max(1.8, Math.min(4.5, targetZoom))
-  }, { passive:false })
+    targetZoom+=e.deltaY*0.0015
+    targetZoom=Math.max(1.8,Math.min(4.5,targetZoom))
+  },{passive:false})
 
   // rotation
-  let dragging=false, prev={x:0,y:0}
+  let dragging=false,prev={x:0,y:0}
 
   window.addEventListener('mousedown',e=>{
     dragging=true
@@ -293,15 +322,15 @@ onMounted(async () => {
 
   window.addEventListener('mousemove',e=>{
     if(!dragging) return
-    globe.rotation.y += (e.clientX-prev.x)*0.005
-    globe.rotation.x += (e.clientY-prev.y)*0.003
+    globe.rotation.y+=(e.clientX-prev.x)*0.005
+    globe.rotation.x+=(e.clientY-prev.y)*0.003
     prev={x:e.clientX,y:e.clientY}
   })
 
   function animate(){
     requestAnimationFrame(animate)
 
-    currentZoom += (targetZoom - currentZoom) * 0.12
+    currentZoom += (targetZoom-currentZoom)*0.12
     camera.position.setLength(currentZoom)
 
     updateLabels()
@@ -314,7 +343,7 @@ onMounted(async () => {
 </script>
 
 <style>
-.canvas {
+.canvas{
   width:100vw;
   height:100vh;
 }
