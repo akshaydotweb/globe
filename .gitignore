@@ -5,3 +5,5 @@ package.json
 ./src/components/textures/
 
 .env
+
+.DS_Store
