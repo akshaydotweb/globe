@@ -7,3 +7,5 @@ package.json
 .env
 
 .DS_Store
+
+*jpg
